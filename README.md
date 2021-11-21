@@ -14,47 +14,126 @@ A Warp map file is a US-ASCII text file with one record per line.  Blank or empt
 4. Sequence of one or more ASCII digits
 5. Optionally, spaces and/or tabs at the end of the line
 
-The symbol at the start of the line indicates the record type.  There are four types of records:
+The symbol at the start of the line indicates the record type.  There are three types of records:
 
-- `^` Beginning Of File (BOF) record
 - `+` Next Line (NL) record
 - `.` Word (W) record
 - `$` End Of File (EOF) record
 
-There must always be at least two records in a Warp map file.  The first record in a Warp map file must always be a BOF record, and the last record must always be an EOF record.  Between those two records is a sequence of zero or more NL and/or W records.
+For the EOF record, both sequences of ASCII digits must decode to integer values of zero.  Neither integer field has any meaning for EOF records.
 
-For the EOF record, both sequences of ASCII digits must decode to integer values of zero.
+For NL and W records, the first sequence of ASCII digits decodes to an integer _skip_ value, and the second sequence of ASCII digits decodes to an integer _read_ value.  Skip values count Unicode codepoints that are _not_ part of content words, while read values indicate the lengths of content words.
 
-For BOF, NL, and W records, the first sequence of ASCII digits decodes to an integer that counts the number of Unicode codepoints on a line that are _not_ part of a content word.  This integer count may be zero.
+Skip values may have any unsigned integer value of zero or greater.  Read values must always be greater than zero, except in the last record of a line, where they must be zero.  NL and W records that have a read value of zero therefore always mark the end of a line in the input file.
 
-For BOF, NL, and W records that occur immediately before a NL or EOF record, the second sequence of ASCII digits must decode to an integer value of zero.  In this case, the first sequence of ASCII digits counts the number of Unicode codepoints at the end of the line before the line break or End Of File that are _not_ part of a content word.  This count may be zero if the line is empty or if there are not Unicode codepoints between the end of the last content word and the line break.
+### Encoding Warp map files
 
-For BOF, NL, and W records that occur immediately before a W record, the second sequence of ASCII digits must decode to an integer value that is greater than zero.  This second sequence of ASCII digits counts the number of Unicode codepoints within a content word that should be processed by Warp processors.
+To encode a Warp map file, the input file that is being mapped must first be decoded into a sequence of Unicode codepoints.  Supplementary Unicode codepoints (Unicode codepoints with values that are greater than U+FFFF) must be represented by a single Unicode codepoint rather than with a pair of surrogate codepoints.  The input file must use UTF-8 encoding.
 
-For the input text or markup file, the last line has the End Of File as its termination, while any previous lines have a line break code as their termination.  If the input file ends with a line break code, there will still be an empty line after this final line break code.  All input files must have at least one line, therefore.
+After the input file has been decoded into a sequence of Unicode codepoints, it must be split into a sequence of lines.  Each line before the last ends with some kind of line break marker.  The last line ends with the actual end of the input file.  Line break markers are _not_ included within the line data.  Lines may be empty (contain no codepoints) if the line break marker or end of file occurs right away.  Since the end of the file is always present in input, input files will always have at least one line, even if the input file is completely empty with no bytes of data.
 
-The first line always begins with a BOF record in the Warp map file, while any subsequent lines always begin with NL records.  After the records of the last line recorded in the Warp map file, there is always an EOF record.
+The line break marker must either be an LF character, or a CR+LF sequence.  The two types of line breaks may be mixed within the same input file.  CR characters must not occur in input except immediately before an LF character.
 
-Each line of the input file is always represented by a sequence of one more records than there are content words in the line.  For a line with no content words, there will be one record; a line with one content word will have two records; and so forth.  Within a line, all records after the first will be W records.
+The final low-level input decoding step is to omit any sequence of U+FEFF byte order mark codepoints that occur at the start of the first line in the file.  UTF-8 optionally has a byte order mark.  There shouldn't ever actually be more than one byte order mark codepoint at the start of the file, but a potential sequence of byte order marks is omitted for robustness, since byte order marks may be automatically filtered out or inserted by I/O libraries.
 
-To decode the meaning of a map file for a line, parse the sequence of integer values that occur in each record for the line into an array of integers, except leave out the last integer value.  Since each record has two integer values and there are `(N + 1)` records where N is the number of content words on the line, there will be `(2 * (N + 1) - 1)` integers in the array, which is equal to a total of `(2 * N) + 1` integers.
+Once these low-level filtering tasks have been performed on the input file, the input file will be a sequence of one or more lines, each of which contains a sequence of zero or more Unicode codepoints, with line break markers and byte order marks left out of line data.
 
-If the first integer of this array has index zero, then indices 1, 3, 5, etc. will represent content word lengths and indices 0, 2, 4, etc. will represent runs of non-content codepoints.  This has the following interpretation:
+Each input line is then encoded into a sequence of one or more Warp map file records.  After the last input line has been encoded, an EOF record is written to finish the Warp map file.
 
-    Index 0 - # of codepoints before first word
-    Index 1 - # of codepoints in first word
-    Index 2 - # of codepoints between first and second words
-    Index 3 - # of codepoints in second word
-    ...
+The first Warp map file record in a line is always an NL record, and any subsequent records in a line are always W records.  The total number of records in each line is always one greater than the total number of content words in the line.
 
-For example, consider the following line:
+If there are no content words in the line, simply write an NL record that has the total number of codepoints in the line as the skip value and zero as the read value.
+
+Otherwise, the skip value of the NL record will be number of codepoints in the line prior to the first content word, and the read value of the NL record will be the number of codepoints in the first content word.  For any additional content words after the first, add W records for each word.  Set the skip value of each W record to the number of codepoints between the previous content word and the start of this content word, and set the read value of each W record to the number of codepoints in each content word.  After all content words have been encoded this way, write one more W record that has a skip value containing the number of codepoints remaining on the line after the last content word, and a read value of zero.
+
+Once all lines have been mapped in this fashion, write an EOF record to indicate the end of the Warp map file.
+
+The specific definition of what counts as a content word is intentionally not defined here, except that content words must each have at least Unicode codepoint.  This allows there to be different Warp map file encoders for different types of files.  For example, a plain-text Warp map file encoder might consider everything in the file that is not whitespace to be part of content words, while an HTML Warp map file encoder might exclude whitespace as well as markup tags.
+
+### Decoding input with Warp map files
+
+Once a Warp map file has been generated for an input file, the input file can be decoded by Warp utilities using the input map.
+
+First, the input file is decoded into a sequence of one or more lines, each of which is a sequence of zero or more codepoints, excluding line break markers and byte order marks.  For details of this process, see the previous section.
+
+Each line is then split into a sequence of `(2*N + 1)` substrings, where N is the total number of content words in the line.  If the line has no content words, there is one substring.  If the line has one content word, there are three substrings.  If the line has two content words, there are five substrings, and so forth.
+
+When there is a single substring in a line, it means there are no content words, and the entire content of the line is in that single substring.  The substring may be empty if the line is empty.
+
+Otherwise, the second, fourth, sixth, and all even-number substrings are content words.  None of these content word substrings may be empty.  The first substring contains everything in the line before the first content word and the last substring contains everything in the line after the last content word.  Both first and last substrings may be empty.  All other odd-number substrings contain the codepoints that come between the content words, and all such substrings may be empty.
+
+To decode the array of substrings from a line in an input file and a sequence of Warp map file records, do the following.  First, gather records from the Warp map file until a record is found that has a read value of zero, which marks the last record in the line.  The first gathered record must be an NL record, and any subsequent gathered records must be W records.  The sum of all skip and read counts of all records gathered for the line must be exactly equal to the number of codepoints in the line (excluding any line break marker and, if this is the first line, any sequence of byte order marks at the start of the line).
+
+Next, convert the sequence of gathered records into a sequence of integers.  The first integer is the skip count of the first record, the second integer is the read count of the first record, the third integer is the skip count of the second record, the fourth integer is the read count of the second record, and so forth.  However, do _not_ include the zero-valued read count of the last record in this sequence of integers.
+
+The sequence of integers can then be converted into the substring array by reading substrings sequentially from the input line.  Each integer value in the sequence indicates how many codepoints should be in the corresponding substring.
+
+### Warp Encapsulation Format Text (WEFT)
+
+For purposes of constructing text processing pipelines, it is much easier if the Warp map file and the input text file are packaged into a single file.  The Warp Encapsulation Format Text (WEFT) is a simple package that prefixes the Warp map file to the input file.
+
+The first line of a WEFT file is just a signature:
+
+    %WEFT;
+
+The second line of a WEFT file counts how many lines of text are in the encapsulated Warp map file.  This must be an unsigned decimal integer value written in ASCII, with no preceding whitespace.
+
+Following the second line are the lines of the Warp map file.  The total number of these lines must match the number of lines declared in the second line of the WEFT file.
+
+After all the lines of the Warp map file have been written in the WEFT file, the lines of the input file are written into the WEFT file.  The input file then proceeds to the end of the WEFT file.
+
+### Example WEFT file
+
+Consider the following input file:
 
     <p>The quick brown <i>fox</i><br/>
+    jumps over the <b>lazy</b> dog.</p>
 
-If this is the first line of the file, we begin with a BOF record, while if this is not the first line of the file, we begin with a NL record.  We could encode this line as follows (starting with a BOF).  Comments have been added to show what each record describes in the line
+Suppose we want to exclude the HTML tags in the Warp map.  The corresponding Warp map file would then be as follows:
 
-    ^3,3   -> <p>,The
-    .1,5   ->  ,quick
-    .1,5   ->  ,brown
-    .4,3   ->  <i>,fox
-    .9,0   -> </i><br/>
+    +3,3
+    .1,5
+    .1,5
+    .4,3
+    .9,0
+    +0,5
+    .1,4
+    .1,3
+    .4,4
+    .5,4
+    .4,0
+    $0,0
+
+The following anotations show which content word each record selects:
+
+    +3,3   -> The
+    .1,5   -> quick
+    .1,5   -> brown
+    .4,3   -> fox
+    .9,0
+    +0,5   -> jumps
+    .1,4   -> over
+    .1,3   -> the
+    .4,4   -> lazy
+    .5,4   -> dog.
+    .4,0
+    $0,0
+
+If we package the Warp map file and the input file into a WEFT file, the result is as follows:
+
+    %WEFT;
+    12
+    +3,3
+    .1,5
+    .1,5
+    .4,3
+    .9,0
+    +0,5
+    .1,4
+    .1,3
+    .4,4
+    .5,4
+    .4,0
+    $0,0
+    <p>The quick brown <i>fox</i><br/>
+    jumps over the <b>lazy</b> dog.</p>
