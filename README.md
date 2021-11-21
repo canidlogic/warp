@@ -68,7 +68,7 @@ Next, convert the sequence of gathered records into a sequence of integers.  The
 
 The sequence of integers can then be converted into the substring array by reading substrings sequentially from the input line.  Each integer value in the sequence indicates how many codepoints should be in the corresponding substring.
 
-### Warp Encapsulation Format Text (WEFT)
+## Warp Encapsulation Format Text (WEFT)
 
 For purposes of constructing text processing pipelines, it is much easier if the Warp map file and the input text file are packaged into a single file.  The Warp Encapsulation Format Text (WEFT) is a simple package that prefixes the Warp map file to the input file.
 
