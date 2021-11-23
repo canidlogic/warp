@@ -2,8 +2,8 @@
 use strict;
 use warnings FATAL => "utf8";
 
-# Core modules
-use File::Temp qw/ tempfile /;
+# Warp modules
+use Warp::Writer;
 
 =head1 NAME
 
@@ -37,37 +37,17 @@ and it is not considered to be part of any content word.
 # Program entrypoint
 # ==================
 
-# First off, set standard input and standard output to use UTF-8
-#
-binmode(STDIN, ":encoding(utf8)") or
-  die "Failed to change standard input to UTF-8, stopped";
-binmode(STDOUT, ":encoding(utf8)") or
-  die "Failed to change standard output to UTF-8, stopped";
-
 # Make sure there are no program arguments
 #
 ($#ARGV == -1) or die "Not expecting program arguments, stopped";
 
-# Open a temporary file that will store the input lines that we read so
-# we can echo them back later; set UTF-8 encoding on this file
-#
-my $fh_cache = tempfile();
-(defined $fh_cache) or die "Failed to create temporary file, stopped";
-binmode($fh_cache, ":encoding(utf8)") or
-  die "Failed to change temporary file to UTF-8, stopped";
+# First off, set standard input to use UTF-8
+  binmode(STDIN, ":encoding(utf8)") or
+    die "Failed to change standard input to UTF-8, stopped";
 
-# Open a temporary file that will store the Warp map file and also start
-# a record counter out at zero
-#
-my $fh_map = tempfile();
-(defined $fh_map) or die "Failed to create temporary file, stopped";
-my $rec_count = 0;
-
-# Now read and process all lines of input, while also storing them into
-# the temporary cache file
+# Read and process all lines of input
 #
 my $first_line = 1;
-my $flag_lb = 0;
 while (<STDIN>) {
   
   # If this is first line, and it begins with a Byte Order Mark, then
@@ -76,130 +56,58 @@ while (<STDIN>) {
     $_ = substr($_, 1);
   }
   
-  # If this line ends with LF or CR+LF, then strip the line break and
-  # set flag_lb
-  $flag_lb = 0;
+  # If this line ends with LF or CR+LF, then strip the line break
   if (/\r\n$/u) {
     # Strip CR+LF
     $_ = substr($_, 0, -2);
-    $flag_lb = 1;
     
   } elsif (/\n$/u) {
     # Strip LF
     $_ = substr($_, 0, -1);
-    $flag_lb = 1;
   }
   
   # Make sure no stray CR or LF characters left
   ((not /\r/u) and (not /\n/u)) or
     die "Stray line break characters, stopped";
   
-  # Write the line to the cache file, append an LF if there was
-  # originally a line break
-  if ($flag_lb) {
-    print {$fh_cache} "$_\n";
-  } else {
-    print {$fh_cache} "$_";
-  }
-  
   # First check if the whole line is whitespace
   if (/^[ \t]*$/u) {
-    # Whole line is whitespace, so just a single NL record that has the
-    # number of codepoints in the line
-    my $ccount = length;
-    print {$fh_map} "+$ccount,0\n";
-    $rec_count++;
+    # Whole line is whitespace, so just a single substring containing
+    # the whole line
+    warp_write($_);
     
   } else {
-    # At least one non-whitespace character, so first count what comes
+    # At least one non-whitespace character, so first get what comes
     # after the last non-whitespace
     /([ \t]*)$/u;
-    my $line_suffix = length($1);
+    my $line_suffix = $1;
     
     # Strip the line suffix if it is not empty
-    if ($line_suffix > 0) {
-      $_ = substr($_, 0, -($line_suffix));
+    if (length $line_suffix > 0) {
+      $_ = substr($_, 0, -(length $line_suffix));
     }
     
     # Parse the rest of the line as pairs of whitespace runs and
-    # non-whitespace sequences, and emit the proper records
-    my $first_record = 1;
+    # non-whitespace sequences, and add them to an array
+    my @a;
     while (/([ \t]*)([^ \t]+)/gu) {
-      # Get lengths of prefix and content word
-      my $prefix_len = length($1);
-      my $content_len = length($2);
-      
-      # Emit appropriate record
-      if ($first_record) {
-        print {$fh_map} "+$prefix_len,$content_len\n";
-        $rec_count++;
-      } else {
-        print {$fh_map} ".$prefix_len,$content_len\n";
-        $rec_count++;
-      }
-      
-      # Clear the first_record flag
-      $first_record = 0;
+      push @a, ($1, $2);
     }
     
-    # We should have generated at least one record
-    (not $first_record) or die "Parsing error, stopped";
+    # Now append the suffix
+    push @a, ($line_suffix);
     
-    # Finish it off with a W record that stores the suffix length
-    print {$fh_map} ".$line_suffix,0\n";
-    $rec_count++;
+    # Write the line
+    warp_write(@a);
   }
   
   # Clear the first line flag
   $first_line = 0;
 }
 
-# If first_line flag is still set, the file was empty with no lines, so
-# add a blank line record to the map file; otherwise, if flag_lb is set,
-# then add another blank line record to account for the line after the
-# last line break
+# Stream the WEFT to output
 #
-if ($first_line) {
-  print {$fh_map} "+0,0\n";
-  $rec_count++;
-
-} elsif ($flag_lb) {
-  print {$fh_map} "+0,0\n";
-  $rec_count++;
-}
-
-# Now we can append the EOF record
-#
-print {$fh_map} "\$0,0\n";
-$rec_count++;
-
-# Begin with the WEFT header and count of records in the map file
-#
-print "%WEFT;\n$rec_count\n";
-
-# Now rewind the map file and echo all the record lines
-#
-seek($fh_map, 0, 0);
-for(my $i = 0; $i < $rec_count; $i++) {
-  my $lr = readline($fh_map);
-  print "$lr";
-}
-
-# We can now close the temporary map file
-#
-close($fh_map);
-
-# We now need to echo the input file that we cached in the temporary
-# file
-#
-seek($fh_cache, 0, 0);
-while (readline($fh_cache)) {
-  print;
-}
-
-# Close the temporary file
-#
-close($fh_cache);
+warp_stream();
 
 =head1 AUTHOR
 
