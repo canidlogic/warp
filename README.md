@@ -21,3 +21,5 @@ To develop new Warp utilities, the `Warp::Reader` and `Warp::Writer` Perl module
 ## Target utilities
 
 `unweft.pl` takes a WEFT file as input and outputs just the input file that was packaged within in.  This is appropriate to use at the end of Warp pipelines to unpack the transformed results from the WEFT file.
+
+`weft2json.pl` takes a WEFT file as input and outputs a JSON representation of how the lines are parsed into substrings.  This is useful for diagnostics.
