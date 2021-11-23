@@ -2,24 +2,23 @@
 use strict;
 use warnings FATAL => "utf8";
 
+# Warp modules
+use Warp::Reader;
+
 =head1 NAME
 
-unweft.pl - Unpack a Warp Encapsulation Text Format (WEFT) file into the
-packaged input file and optionally also extract the packaged Warp map
-file.
+unweft.pl - Unpack a Warp Encapsulation Text Format (WEFT) file and
+output just the packaged input file.
 
 =head1 SYNOPSIS
 
   unweft.pl < input.weft > output.txt
-  unweft.pl -map mapfile.txt < input.weft > output.txt
 
 =head1 DESCRIPTION
 
 This script reads a WEFT file from standard input.  The input text file
 that is packaged within the WEFT file is then written to standard
-output.  If the C<-map> parameter is provided, then the Warp map file
-that is packaged within the WEFT file is written to the given parameter
-file path, overwriting any file that is currently there.
+output.
 
 =cut
 
@@ -27,85 +26,33 @@ file path, overwriting any file that is currently there.
 # Program entrypoint
 # ==================
 
-# First off, set standard input and standard output to use UTF-8
+# First off, set standard output to use UTF-8
 #
-binmode(STDIN, ":encoding(utf8)") or
-  die "Failed to change standard input to UTF-8, stopped";
 binmode(STDOUT, ":encoding(utf8)") or
   die "Failed to change standard output to UTF-8, stopped";
 
-# Handle parameter list
+# Make sure there are no program arguments
 #
-my $write_map = 0;
-my $map_path;
+($#ARGV == -1) or die "Not expecting program arguments, stopped";
 
-if ($#ARGV == -1) {
-  # No arguments, so we won't write the map file
-  $write_map = 0
+# Load the WEFT file
+#
+warp_accept();
+
+# Echo each line to standard output
+#
+for(my $i = 1; $i <= warp_count(); $i++) {
   
-} elsif ($#ARGV == 1) {
-  # Two arguments, so first argument must be -map
-  ($ARGV[0] eq '-map') or
-    die "Unrecognized argument '$ARGV[0]', stopped";
+  # Get an array of substrings for the line
+  my @pl = warp_read();
   
-  # Store the map file path
-  $write_map = 1;
-  $map_path = $ARGV[1];
-  
-} else {
-  die "Wrong number of parameters, stopped";
-}
-
-# First line of input needs to be the %WEFT; signature
-#
-my $sig_line = <STDIN>;
-((defined $sig_line) and ($sig_line =~ /^%WEFT;[ \t]*(?:\r\n|\n)?$/u))
-  or die "Failed to read WEFT signature, stopped";
-
-# Second line of input needs to be an integer count of the number of
-# lines in the map file
-#
-my $lcount = <STDIN>;
-(defined $lcount) or
-  die "Failed to read line count in WEFT file, stopped";
-if ($lcount =~ /^([0-9]+)[ \t]*(?:\r\n|\n)?$/u) {
-  $lcount = int($1);
-} else {
-  die "Failed to parse line count in WEFT file, stopped";
-}
-
-# If the map file was requested, create it now
-#
-my $fh_map;
-if ($write_map) {
-  open($fh_map, '> :encoding(UTF-8)', $map_path) or
-    die "Failed to create map file '$map_path', stopped";
-}
-
-# Read all the lines from the map file; if the map file was requested,
-# transfer the lines to the output map file
-#
-for(my $i = 0; $i < $lcount; $i++) {
-  # Read a line from the packaged map file
-  my $mline = <STDIN>;
-  (defined $mline) or die "Failed to read map file line, stopped";
-  
-  # If requested, transfer to output map file
-  if ($write_map) {
-    print { $fh_map } "$mline";
+  # Echo each substring
+  for my $s (@pl) {
+    print "$s";
   }
-}
-
-# If map file was requested, we can close it now
-#
-if ($write_map) {
-  close($fh_map);
-}
-
-# Echo all remaining lines of input to standard output
-#
-while (<STDIN>) {
-  print;
+  
+  # Write the line break
+  print "\n";
 }
 
 =head1 AUTHOR
