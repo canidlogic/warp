@@ -18,6 +18,8 @@ To develop new Warp utilities, the `Warp::Reader` and `Warp::Writer` Perl module
 
 `warptext.pl` takes a plain-text file as input and packages it appropriately in a WEFT file.  This source utility should only be used for unstructured plain-text files that do not have any kind of markup.  Anything in the plain-text file that is not whitespace or a line break is taken to be textual content that should be subject to Warp transformations.
 
+`warpxml.pl` takes an XML or HTML file or fragment as input and packages it appropriately in a WEFT file.  It also decodes entity escapes and simplifies them as much as possible.  Markup tags are excluded from textual content in the Warp Map.  See the script documentation for further information.
+
 ## Target utilities
 
 `unweft.pl` takes a WEFT file as input and outputs just the input file that was packaged within in.  This is appropriate to use at the end of Warp pipelines to unpack the transformed results from the WEFT file.
