@@ -42,8 +42,9 @@ and it is not considered to be part of any content word.
 ($#ARGV == -1) or die "Not expecting program arguments, stopped";
 
 # First off, set standard input to use UTF-8
-  binmode(STDIN, ":encoding(utf8)") or
-    die "Failed to change standard input to UTF-8, stopped";
+#
+binmode(STDIN, ":encoding(utf8)") or
+  die "Failed to change standard input to UTF-8, stopped";
 
 # Read and process all lines of input
 #
