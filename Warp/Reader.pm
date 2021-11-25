@@ -1,5 +1,6 @@
 package Warp::Reader;
 use strict;
+use feature 'unicode_strings';
 use warnings FATAL => "utf8";
 use parent qw(Exporter);
 
