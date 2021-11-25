@@ -12,111 +12,205 @@ use Warp::Writer;
 
 =head1 NAME
 
-warpxml.pl - Package an XML or HTML file in a Warp Encapsulation Text
-Format (WEFT) package that can be processed with Warp tools.
+warpxml.pl - Package XML or HTML in a Warp Encapsulation Text Format
+(WEFT) package that can be processed with Warp tools.
 
 =head1 SYNOPSIS
 
   warpxml.pl < input.xml > output.weft
+  
+  warpxml.pl -begin tag < input.xml.fragment > output.weft
 
 =head1 DESCRIPTION
 
-This script reads an XML file from standard input.  (It should also work
-on HTML files.)  It writes a WEFT file to standard output that includes
-the XML file as well as a Warp map file that indicates where the content
-words are located within the XML file.
+This script reads an XML or HTML file or fragment from standard input.
+It writes a WEFT file to standard output that includes the given input
+lines as well as a Warp map that indicates where the content words are
+located within the HTML or XML.
 
-You may also use this script to process fragments of XML or HTML, but
-only so long as the start and end of the fragment are raw character data
-and not in the midst of some kind of markup.  (It is acceptable if the
-first/last character of the fragment is part of markup, only if the
-first/last character is the first/last character of a markup element.)
+=head2 Handling fragments
+
+By default, the script assumes that at the start of input we are not
+inside any kind of markup.  This is appropriate if you are passing a
+whole HTML or XML file to input, or if you are passing a fragment that
+does not begin in the middle of some kind of markup tag.
+
+(By "inside a markup tag" we mean actually inside the angle brackets.
+This script does not parse the XML DOM, so it does not matter whether
+or not the start of input is logically encapsulated within some
+element.)
+
+You can also tell this script to assume at the beginning of input that
+it is in some specific location in parsing the input file.  This is
+appropriate if you are processing a fragment that does not begin cleanly
+outside of any markup.  However, you should never need to use this
+feature on whole HTML or XML files or on fragments that begin cleanly.
+
+To tell the script to begin in some specific location, add a `-begin`
+parameter followed by a parameter describing the location to begin at.
+The following table shows the location codes and their meanings:
+
+   Location code |                       Meaning
+  ===============+======================================================
+       char      | (Default) Not inside any markup tag
+       tag       | Inside a <> tag, but not in an attribute value
+    tag-att-sq   | Inside a '' attribute value after the opening quote
+    tag-att-dq   | Inside a "" attribute value after the opening quote
+      comment    | Inside a <!-- --> comment
+       CDATA     | Inside a <![CDATA[ ]]> section
+      doctype    | Inside a <!DOCTYPE>, but not in an attribute value
+  doctype-att-sq | Inside a '' attribute in <!DOCTYPE>, after the quote
+  doctype-att-dq | Inside a "" attribute in <!DOCTYPE>, after the quote
+        pi       | Inside a <? ?> processing instruction
+     xml-decl    | Inside a <?xml ?> declaration
+
+The location at the end of input does not matter and does not need to be
+declared.
+
+=head2 XML/HTML parsing notes
+
+This script includes its own XML/HTML parser.  However, this is not a
+full-blown XML or HTML parser.  Instead, it only includes features
+needed for WEFT packaging and handling entity references in character
+data.  In particular, just because an XML or HTML file passes through
+this script without complaint does B<not> mean that the XML or HTML is
+valid.
+
+The input MUST be in UTF-8.  (US-ASCII files are also OK, because they
+are a strict subset of UTF-8.)  Line break style may be either LF or
+CR+LF.  An optional UTF-8 byte order mark (BOM) is allowed at the
+beginning of input, but it is not copied into the WEFT file and it is
+not considered to be part of any content word.  This script does not
+parse any metadata within the file that marks the text encoding used, so
+you are required to use UTF-8 or US-ASCII.
 
 To determine where content words are, this script only considers raw
 character data, excluding all markup.  Markup includes all tags,
 attribute values within those tags, comments, CDATA sections, document
-type declarations, XML declarations, and processing instructions.
+type declarations, XML declarations, and processing instructions.  Using
+the location codes defined in the previous section, content words will
+only be drawn from the C<char> location.
 
-Character references and entity references (that is, numeric and named
-ampersand escapes) are handled specially.  This script will scan for
-both types of references in all locations EXCEPT within comments, within
-CDATA sections, within document type declarations, within processing
-instructions, and within XML declaration.  In those exceptional
-locations, ampersand has no special meaning as far as this script is
-concerned and everything is passed through without reference decoding.
+This script will consider, within the C<char> location, content words to
+be sequences of one or more consecutive codepoints that are not ASCII
+space, ASCII tab, or the line break characters LF and CR.  This script
+will decode entities as much as possible and replace them with their
+Unicode equivalents so that Warp tools do not need to handle complex
+entity references.  The only entity references that will appear within
+content words are the following:
 
-In all other locations, an ampersand character may only be used when it
-is the start of a character or entity reference.  The reference must
-always end with a semicolon, which is included as part of the reference.
-If the character that immediately comes after the ampersand is a number
-sign, then the reference is a numeric character reference.  Otherwise,
-it is a named entity reference.
+   Entity reference | Meaning
+  ==================+=========
+        &amp;       |    &
+        &lt;        |    <
+        &gt;        |    >
 
-Named entity references may refer to any HTML5 named entity.  This
-script has an embedded table of all such references, derived from a JSON
-source file from the HTML5 specification.  See the `README.md` file in
-the `entity` directory for further information.
+These escapes are necessary to prevent ambiguity with mark-up.  The
+ampersand, left angle bracket, and right angle bracket are I<always>
+encoded with the entity references shown above within content words.
 
-Note that this script actually supports many more named entity
-references than the XML specification allows for.  Input files that use
-these extra entity references are not valid XML files.  However, this
-script will decode these extra named entity references such that the
-output of this script I<will> be valid, only using the few entity
-references that are supported by the XML specification.
+=head2 Entity reference handling
 
-Also note that some named entities decode to a sequence of more than one
-Unicode codepoint.
+This script has special support for entity references that may be found
+in both HTML and XML files.  There are three types of entity reference.
+A I<named entity reference> begins with an ampersand, then has a
+predefined name, and finishes with a semicolon.  A I<decimal entity
+reference> begins with an ampersand followed by a number sign followed
+by a sequence of one or more decimal digits followed by a semicolon.  A
+I<hex entity reference> begins with an ampersand followed by a number
+sign followed by a letter C<x> followed by a sequence of one or more
+base-16 digits followed by a semicolon.
 
-Numeric character references are base-10 if their third character is an
-ASCII decimal digit, otherwise the third character must be an C<x> and
-the reference is base-16.  The remaining content of the reference is a
-numeric Unicode codepoint value, followed by the semicolon that closes
-the reference.
+For named entity references, this script supports the full range of
+predefined names defined by the HTML5 specification.  Note that this
+range is far more comprehensive than the tiny subset mandated by the
+XML specification.  Named entity references almost always decode to a
+single Unicode codepoint, but some entity references decode to a
+sequence of more than one codepoint.
 
-This script will first decode named entity references and numeric
-character references to a sequence of one or more replacement Unicode
-codepoints.  Then, it will scan the replacement Unicode codepoints for
-unsafe codepoints, and replace any unsafe codepoints with a named entity
-reference chosen from the small subset that is supported by the XML
-specification.  Angle brackets (less-than and greater-than) and the
-ampersand are always considered unsafe.  Within a single-quoted
-attribute value, the single quote (apostrophe) is also considered
-unsafe.  Within a double-quoted attribute value, the double quote is
-also considered unsafe.
+Decimal and hex entity references always decode to a single Unicode
+codepoint with a value matching the numeric value given in the entity
+escape code.
 
-Following this decoding process, the script will check that the
-replacement location is valid.  All replacement locations are valid,
-except the space within markup tags that is not a double-quoted or
-single-quoted attribute value.  If the replacement location is not
-valid, the script will signal an error.
+All entities will first be replaced by their corresponding Unicode
+codepoint(s) by this script.  Then, any "unsafe" codepoints in the
+resulting decoded string will be re-encoded as entities.  The following
+table shows all possible unsafe codepoints and how they are re-encoded:
 
-Once references have been handled in the manner described above, this
-script will consider content words to be sequences of one or more
-consecutive codepoints in the raw character data (excluding markup) that
-are not ASCII space, ASCII tab, or the line break characters LF and CR.
+   Unsafe character | Re-encoded entity
+  ==================+====================
+          &         |       &amp;
+          <         |       &lt;
+          >         |       &gt;
+          '         |       &apos;
+          "         |       &quot;
 
-Content words may include XML named entity references.  However, it will
-only include these when it is truly necessary to avoid confusion with
-the markup (all other references will have been decoded), and these
-named entity references are always for non-alphanumeric ASCII
-characters.  In raw text, the named entity references may only refer to
-the angle brackets and ampersand, while in quoted attribute values,
-named entity references may only refer to the angle brackets, ampersand,
-and the enclosing type of quote.
+All of the re-encoded entities given in the table above are supported by
+the XML specification.  Therefore, even if the input file contains
+entity references that are not supported by XML, the output from this
+script will only include supported XML entities.
+
+The single quote character is only considered unsafe in single-quoted
+attributes and is left alone everywhere else.
+
+The double quote character is only considered unsafe in double-quoted
+attributes and is left alone everywhere else.
+
+=head2 Entity locations
+
+HTML/XML entities only occur in certain types of locations within the
+HTML/XML file.  Using the location codes defined in an earlier section,
+entities are never present in locations C<comment> C<CDATA> C<doctype>
+C<doctype-att-sq> C<doctype-att-dq> C<pi> or C<xml-decl>.  If an
+ampersand occurs within any of these locations, it is assumed to be a
+literal ampersand by this script and it is B<not> interpreted as an
+entity.
+
+For the C<tag> location, this script will make sure that there is no
+ampersand in this section, causing an error if there is.  (This location
+does not include quoted attributes within the tag.)
+
+For the remaining C<char> C<tag-att-sq> and C<tag-att-dq> locations,
+entities are allowed and are processed by this script in the manner
+described in the previous section.  The only difference between the
+three section types is the set of characters considered "unsafe."  For
+all three sections, the ampersand and angle brackets are unsafe.  For
+quoted attributes, the quote character is also considered unsafe.
+
+=head2 Output codepoint range
 
 This script will make sure that everything included in the packaged
 input in the output WEFT file will obey the XML character range and
 avoid compatibility ranges defined in the XML specification.
 
-Note that this script does not fully parse the XML or perform any sort
-of comprehensive validity checks.  It only parses and checks what it
-needs to do its job.
+Specifically, this script will allow any Unicode codepoint in range
+[U+0000, U+10FFFF] B<except> for the following:
 
-The input file MUST be in UTF-8.  (US-ASCII files are also OK,
-because they are a strict subset of UTF-8.)  Line break style may be
-either LF or CR+LF.  An optional UTF-8 byte order mark (BOM) is allowed
-at the beginning of the file, but it is not copied into the WEFT file
-and it is not considered to be part of any content word.
+=over 4
+
+=item C0 and C1 non-printing control codes
+
+This includes all codepoints in range [U+0000, U+001F] and in range
+[U+007F, U+009F] except for HT (U+0009), CR (U+000D), LF (U+000A), and
+NEL (U+0085).
+
+=item Surrogate codepoints
+
+This includes all codepoints in range [U+D800, U+DFFF].  These are
+unnecessary in UTF-8.  Use the supplemental codepoint directly instead.
+
+=item Noncharacters
+
+These are permanently undefined Unicode codepoints.  This includes the
+range [U+FDD0, U+FDEF], the characters U+FFFE and U+FFFF, and any
+supplemental character for which the sixteen least significant bits are
+either FFFE or FFFF.
+
+The U+FFFE codepoint is allowed, however, at the very start of input to
+serve as an optional UTF-8 Byte Order Mark (BOM).  This script will
+silently filter this codepoint out.
+
+=back
 
 =cut
 
