@@ -1,5 +1,6 @@
 #!/usr/bin/env perl
 use strict;
+use feature 'unicode_strings';
 use warnings FATAL => "utf8";
 
 # Core modules
@@ -342,9 +343,130 @@ $ent_table = decode_base64($ent_table);
 $ent_table = Compress::Zlib::memGunzip($ent_table) or
   die "Failed to decompress entity table, stopped";
 
+# ==========
+# Local data
+# ==========
+
+# The entities table decoded into a hash structure.
+#
+# entities_init is zero if this hash hasn't been initialized yet.  Use
+# the entities_init() function to initialize this hash if not already
+# initialized.
+#
+# Once initialized, the keys in the entities hash will be the name of
+# the entity, excluding the opening ampersand and the closing semicolon.
+# The values will be references to arrays that store a sequence of one
+# or more integers, defining which Unicode codepoint(s) the named entity
+# decodes to.
+#
+my $entities_init = 0;
+my %entities;
+
 # ===============
 # Local functions
 # ===============
+
+# Initialize the %entities variable if not already initialized.
+#
+sub entity_init {
+  # Should have exactly zero arguments
+  ($#_ == -1) or die "Wrong number of arguments, stopped";
+  
+  # Only proceed if not yet initialized
+  unless ($entities_init) {
+    
+    # Match all records in the embedded entity table file and add them
+    # to the entities hash
+    while ($ent_table =~ /([A-Za-z0-9]+)=([0-9A-Fa-f,]+)/ug) {
+      
+      # Get the entity name and the codepoint sequence
+      my $ent_name = $1;
+      my @codeps   = split /,/, $2;
+      
+      # Decode each codepoint into a numeric value from base-16
+      for(my $i = 0; $i <= $#codeps; $i++) {
+        $codeps[$i] = hex($codeps[$i]);
+      }
+      
+      # Add the record to the hash
+      $entities{$ent_name} = \@codeps;
+    }
+    
+    # Set the initialization flag
+    $entities_init = 1;
+  }
+}
+
+# Check whether a given numeric codepoint value is valid within an XML
+# file.
+#
+# All Unicode codepoints in range [0, 0x10ffff] are valid EXCEPT:
+#
+#   - Control codes below 0x20 that are not HT, CR, or LF
+#   - Control codes in range [0x7F, 0x9F] that are not NEL
+#   - Surrogates in range [0xD800, 0xDFFF]
+#   - Noncharacters in range [0xFDD0, 0xFDEF]
+#   - Noncharacters 0xFFFE and 0xFFFF
+#   - Supplemental noncharacters, which are codepoints above 0xFFFF that
+#     have 0xFFFE or 0xFFFF as their sixteen least significant bits
+#
+# Parameters:
+#
+#   1 : integer - the numeric codepoint value to check
+#
+# Return:
+#
+#   1 if codepoint is valid, 0 if not
+#
+sub valid_codep {
+  # Should have exactly one argument
+  ($#_ == 0) or die "Wrong number of arguments, stopped";
+  
+  # Get the argument and set argument type
+  my $codep = int(shift);
+  
+  # Start with valid result
+  my $result = 1;
+  
+  # Fail if outside Unicode range
+  unless (($codep >= 0) and ($codep <= 0x10ffff)) {
+    $result = 0;
+  }
+  
+  # Fail if disallowed control code
+  unless ((($codep >= 0x20) and ($codep <= 0x7e)) or
+          ($codep > 0x9f) or
+          ($codep == 0x9) or ($codep == 0xa) or ($codep == 0xd) or
+          ($codep == 0x85)) {
+    $result = 0;
+  }
+  
+  # Fail if surrogate
+  if (($codep >= 0xd800) and ($codep <= 0xdfff)) {
+    $result = 0;
+  }
+  
+  # Fail if in first non-character range
+  if (($codep >= 0xfdd0) and ($codep <= 0xfdef)) {
+    $result = 0;
+  }
+  
+  # Fail if last two codepoints in BMP
+  if (($codep == 0xfffe) or ($codep == 0xffff)) {
+    $result = 0;
+  }
+  
+  # Fail if last two codepoints of any supplemental plane
+  if ($codep > 0xffff) {
+    my $offs = $codep & 0xffff;
+    if (($offs == 0xfffe) or ($offs == 0xffff)) {
+      $result = 0;
+    }
+  }
+  
+  # Return result
+  return $result;
+}
 
 # Handle decoding and replacing any entity references within a given
 # string.
@@ -352,7 +474,78 @@ $ent_table = Compress::Zlib::memGunzip($ent_table) or
 # Croaks on error or if entity references are found in a location they
 # are not allowed.
 #
-# @@TODO:
+# The given location string must have one of the following values:
+#
+#   char
+#   tag
+#   tag-att-sq
+#   tag-att-dq
+#   comment
+#   CDATA
+#   doctype
+#   doctype-att-sq
+#   doctype-att-dq
+#   pi
+#   xml-decl
+# 
+# For the comment, CDATA, doctype, doctype-att-sq, doctype-att-dq, pi,
+# and xml-decl locations, this function just returns the given string
+# as-is without any processing.  Entities are not decoded in these
+# locations, and the ampersand has no special meaning.
+#
+# For the tag location, this function simply checks that there is no
+# ampersand in the string before returning it as-is.  Entity escapes are
+# not allowed in tags, unless they are in a quoted attribute value.
+#
+# For the tag-att-sq location, tag-att-dq, and char locations, this
+# function processes and decodes entities in the manner described below.
+# The only difference between the three locations is which characters
+# are considered "unsafe", as shown in the following table:
+#
+#     Location  | Unsafe characters
+#   ============+==================
+#       char    |     & < >
+#    tag-att-sq |     & < > '
+#    tag-att-dq |     & < > "
+#
+# Entity decoding in these three locations begins by parsing the input
+# string into a sequence of raw characters and entities.  Raw character
+# sequences may not contain any ampersand.  Entities must begin with an
+# ampersand, followed by a sequence of one or more ASCII alphanumeric
+# characters or # characters, and ending with a semicolon.
+#
+# The entire input is then transformed into a sequence of raw characters
+# without any entities by translating each entity into the codepoint(s)
+# it encodes.  For entities that begin with &# followed by a sequence of
+# decimal digits and then the semicolon, the decimal digits decode to a
+# numeric Unicode codepoint value.  For entities that begin with &#x
+# or &#X followed by a sequence of base-16 digits and then the
+# semicolon, the base-16 digits decode to a numeric Unicode codepoint
+# value.  Numeric entities may never encode surrogate codepoint values
+# or other values disallowed by XML.
+#
+# For all other entities, all the characters between the opening
+# ampersand and the closing semicolon must be a case-sensitive match for
+# an entity key in the named entity table that was embedded earlier in
+# this script.  In this case, the entity maps to the sequence of one or
+# more codepoints defined for the entity in that table.
+#
+# Finally, the transformed raw character sequence is scanned for
+# "unsafe" characters.  The unsafe characters vary for the particular
+# location, as shown in the table above.  Unsafe characters are replaced
+# by an XML named entity as shown below:
+#
+#    Unsafe character | Replacement entity
+#   ==================+====================
+#           &         |       &amp;
+#           <         |       &lt;
+#           >         |       &gt;
+#           '         |       &apos;
+#           "         |       &quot;
+#
+# Note that the single-quote in the above table is only replaced when
+# in the tag-att-sq location, and the double-quote in the above table is
+# only replaced in the tag-att-dq location.
 #
 # Parameters:
 #
@@ -365,8 +558,135 @@ $ent_table = Compress::Zlib::memGunzip($ent_table) or
 #   string - the entity-decoded string value
 #
 sub entity_decode {
-  # @@TODO:
-  return $_[0];
+  # Should have exactly two arguments
+  ($#_ == 1) or die "Wrong number of arguments, stopped";
+  
+  # Get the arguments
+  my $str = shift;
+  my $loc = shift;
+  
+  # Set argument types
+  $str = "$str";
+  $loc = "$loc";
+  
+  # Check the location argument
+  (($loc eq "char") or
+    ($loc eq "tag") or
+    ($loc eq "tag-att-sq") or
+    ($loc eq "tag-att-dq") or
+    ($loc eq "comment") or
+    ($loc eq "CDATA") or
+    ($loc eq "doctype") or
+    ($loc eq "doctype-att-sq") or
+    ($loc eq "doctype-att-dq") or
+    ($loc eq "pi") or
+    ($loc eq "xml-decl")) or die "Invalid location type, stopped";
+  
+  # Initialize %entities hash if necessary
+  entity_init();
+  
+  # Begin with an empty result
+  my $result = '';
+  
+  # Handling depends on location type
+  if (($loc eq "char") or
+        ($loc eq "tag-att-sq") or ($loc eq "tag-att-dq")) {
+    
+    # For the character location and the single-quoted and double-quoted
+    # tag attribute locations, we first need to digest the given string
+    # into the result, transferring raw character sequences as-is and
+    # decoding entities into their corresponding codepoints
+    while (length $str > 0) {
+      
+      # Transfer any sequence that does not contain ampersand from the
+      # beginning of the string to the result
+      if ($str =~ /^([^&]+)/u) {
+        my $str_prefix = $1;
+        $result = $result . $str_prefix;
+        if (length $str_prefix < length $str) {
+          $str = substr($str, length $str_prefix);
+        } else {
+          $str = '';
+        }
+      }
+      
+      # If the string is now empty, we are done with this loop
+      if (length $str < 1) {
+        last;
+      }
+      
+      # If we got here, match the entity that is now at the beginning of
+      # the string and drop it from the string
+      ($str =~ /^&([A-Za-z0-9#]+);/u) or
+        die "Invalid entity at start of '$str', stopped";
+
+      my $etext = $1;
+      if (length($etext) + 2 < length $str) {
+        $str = substr($str, length($etext) + 2);
+      } else {
+        $str = '';
+      }
+
+      # Decode the specific type of entity to get a sequence of one or
+      # more codepoints
+      my @dca;
+      if ($etext =~ /^#x([0-9A-Fa-f]+)$/ui) {
+        # Base-16 numeric reference, add single codepoint
+        push @dca, (hex($1));
+        
+      } elsif ($etext =~ /^#([0-9]+)$/u) {
+        # Base-10 numeric reference, add single codepoint
+        push @dca, (int($1));
+        
+      } else {
+        # Must be a named entity -- check that it exists
+        (exists $entities{$etext}) or
+          die "Unrecognized named entity '$etext', stopped";
+        
+        # Copy its codepoint sequence
+        push @dca, @{$entities{$etext}};
+      }
+      
+      # Make sure all of the decoded codepoints are supported in XML
+      for my $cp (@dca) {
+        (valid_codep($cp)) or
+          die "Entity '$etext' decodes to invalid codepoint, stopped";
+      }
+      
+      # Append each decoded codepoint to the result string
+      for my $cp (@dca) {
+        $result = $result . chr($cp);
+      }
+    }
+    
+    # Escape characters that are always unsafe
+    $result =~ s/&/&amp;/gu;
+    $result =~ s/</&lt;/gu;
+    $result =~ s/>/&gt;/gu;
+    
+    # In attributes, also escape the specific quote character
+    if ($loc eq "tag-att-sq") {
+      $result =~ s/'/&apos;/gu;
+    
+    } elsif ($loc eq "tag-att-dq") {
+      $result =~ s/"/&quot;/gu;
+    }
+    
+  } elsif ($loc eq "tag") {
+    # For the tag location outside of attribute values, we just make
+    # sure that there is no ampersand and then pass through as-is
+    (not ($str =~ /&/u)) or
+      die "Ampersand not allowed in tag unless quoted, stopped";
+    $result = $str;
+    
+  } else {
+    # For all other location types, we just pass the string through
+    # without any processing
+    $result = $str;
+  }
+  
+  # Return result;
+  return $result;
 }
 
 # ==================
@@ -578,8 +898,10 @@ while (<STDIN>) {
           die "Unexpected, stopped";
         }
         
-        # Entity-decode the tag text and add it to skip buffer
-        $t_str = entity_decode($t_str, $loc);
+        # Entity-decode the tag text (except for the last character) and
+        # add it to skip buffer
+        $t_str = entity_decode(substr($t_str, 0, -1), $loc)
+                  . substr($t_str, -1);
         $skip = $skip . $t_str;
       
       } else {
@@ -601,10 +923,12 @@ while (<STDIN>) {
       if ($str =~ /'/ug) {
         # Attribute ends, pos stores index of first character after the
         # closing quote; add rest of attribute to the skip buffer after
-        # entity-decoding it and change the location back to tag, but
-        # outside any enclosed attribute
+        # entity-decoding it (except for last character) and change the
+        # location back to tag, but outside any enclosed attribute
         my $at_len = pos($str);
-        $skip = $skip . entity_decode(substr($str, 0, $at_len), $loc);
+        $skip = $skip . entity_decode(
+                            substr($str, 0, $at_len - 1), $loc)
+                          . substr($str, $at_len - 1, 1);
         if ($at_len < length $str) {
           $str = substr($str, $at_len);
         } else {
@@ -629,10 +953,12 @@ while (<STDIN>) {
       if ($str =~ /"/ug) {
         # Attribute ends, pos stores index of first character after the
         # closing quote; add rest of attribute to the skip buffer after
-        # entity-decoding it and change the location back to tag, but
-        # outside any enclosed attribute
+        # entity-decoding it (except for last character) and change the
+        # location back to tag, but outside any enclosed attribute
         my $at_len = pos($str);
-        $skip = $skip . entity_decode(substr($str, 0, $at_len), $loc);
+        $skip = $skip . entity_decode(
+                            substr($str, 0, $at_len - 1), $loc)
+                          . substr($str, $at_len - 1, 1);
         if ($at_len < length $str) {
           $str = substr($str, $at_len);
         } else {
@@ -733,8 +1059,10 @@ while (<STDIN>) {
           die "Unexpected, stopped";
         }
         
-        # Entity-decode the document type text and add it to skip buffer
-        $dt_str = entity_decode($dt_str, $loc);
+        # Entity-decode the document type text (except for last
+        # character) and add it to skip buffer
+        $dt_str = entity_decode(substr($dt_str, 0, -1), $loc)
+                      . substr($dt_str, -1);
         $skip = $skip . $dt_str;
       
       } else {
