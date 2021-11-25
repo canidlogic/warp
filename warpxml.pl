@@ -787,9 +787,42 @@ sub entity_decode {
 # Program entrypoint
 # ==================
 
-# Make sure there are no program arguments
+# Set default starting location to "char"
 #
-($#ARGV == -1) or die "Not expecting program arguments, stopped";
+my $loc = "char";
+
+# Process program arguments
+#
+for(my $i = 0; $i <= $#ARGV; $i++) {
+  # Interpret argument
+  if ($ARGV[$i] eq '-begin') {
+    # Set custom start location -- must be another parameter
+    ($i < $#ARGV) or
+      die "Option -begin requires another argument, stopped";
+    
+    # Consume the next parameter as the location to set
+    $i++;
+    $loc = $ARGV[$i];
+    
+    # Check that location is valid
+    (($loc eq "char") or
+      ($loc eq "tag") or
+      ($loc eq "tag-att-sq") or
+      ($loc eq "tag-att-dq") or
+      ($loc eq "comment") or
+      ($loc eq "CDATA") or
+      ($loc eq "doctype") or
+      ($loc eq "doctype-att-sq") or
+      ($loc eq "doctype-att-dq") or
+      ($loc eq "pi") or
+      ($loc eq "xml-decl")) or
+        die "Invalid location code '$loc', stopped";
+    
+  } else {
+    # Unrecognized argument
+    die "Unrecognized program argument '$ARGV[$i]', stopped";
+  }
+}
 
 # First off, set standard input to use UTF-8
 #
@@ -799,7 +832,6 @@ binmode(STDIN, ":encoding(utf8)") or
 # Read and process all lines of input
 #
 my $first_line = 1;
-my $loc = "char";
 while (<STDIN>) {
   
   # If this is first line, and it begins with a Byte Order Mark, then
