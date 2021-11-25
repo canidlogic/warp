@@ -1,5 +1,6 @@
 #!/usr/bin/env perl
 use strict;
+use feature 'unicode_strings';
 use warnings FATAL => "utf8";
 
 # Warp modules
