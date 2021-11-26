@@ -21,56 +21,107 @@ use Unicode::Normalize;
 =head1 NAME
 
 warphyphen.pl - Transform a WEFT file by applying TeX hyphenation
-patterns to content words.
+patterns and/or special hyphenation word lists to content words.
 
 =head1 SYNOPSIS
 
-  warphyphen.pl -load patterns.tex [options] < input.weft > output.weft
+  warphyphen.pl [options] < input.weft > output.weft
 
 =head1 DESCRIPTION
 
 This script reads WEFT input, transforms it, and outputs the transformed
-WEFT results.  Content words are transformed by hyphenating them
-according to a given TeX pattern file.
+WEFT results.  Content words are transformed by hyphenation, which is
+controlled by options documented in the following section.  If no
+options are provided, no hyphenation will be applied, but the output may
+not be exactly the same as the input due to Unicode normalization
+applied to parts of content words.
 
-The C<-load> option is required, which must be followed by another
-parameter that is the path to the TeX hyphenation patterns file to load.
-This script will assume that the hyphenation pattern file is using UTF-8
-format.  If that is not the case, you can use the C<-style> option
-followed by a parameter selecting the hyphenation pattern file type.
-The supported styles are C<czech> C<german> and C<utf8> (the default).
+Hyphenation is only applied within content words.  Each content word is
+split up into "alphabetic" words (a misnomer since non-alphabetic
+scripts are also supported), which are defined as sequences of
+consecutive codepoints of Unicode class L (Letter) or M (Combining Mark)
+within a content word.  The "alphabetic" words are then hyphenated.
+Unicode normalization to NFC is applied to parts of content words, but
+this script does I<not> normalize the entire WEFT file.
 
-Optionally, you can specify the C<-list> option followed by the path to
-a word list file to generate.  If the given file path already exists, it
-will be overwritten.  The word list will contain all unique alphabetic
-words that were found within the content words of the file, along with
-the hyphenation points marked by grave accents.  Sorting order is
-longest word first, and alphabetization only after sort order is
-applied.
+Temporary databases are used, so this script should be able to handle
+huge input files and huge word specialized hyphenation lists without
+problem.  However, the C<-list> option requires that all keys be loaded
+into memory at once to sort them properly.
 
-Optionally, you can specify the C<-special> option followed by the path
-to a special hyphenation word list file.  This file contains one
-alphabetic word per line, with hyphenation points marked with grave
-accents.  If a word is present without any grave accents, it means that
-there are no hyphenation points in the alphabetic word.  Words can be
-given in any order in this list file.
+=head2 Script options
 
-B<IMPORTANT:> Matching in the special word list is I<case-sensitive>.
-This means that you may have to provide multiple versions of the same
-word (lowercase, capitalized, all-caps, etc.).  The word list generated
-by the C<-list> option is also case-sensitive.  There are complexities
-involving case transformation, so making this script case-insensitive
-would involve accounting for a number of edge cases.  It is much more
-reliable to have matching be case sensitive.
+=over 4
 
-When a special hyphenation word list is given, this script will first
-look up alphabetic words to see if they match anything in the special
-word list.  If so, then the TeX patterns are not applied and instead the
-special hyphenation pattern is used.  Otherwise, the TeX patterns are
-applied.
+=item -load [path]
 
-Temporary databases are used for word lists, so this script should be
-able to handle huge input files and huge word lists without problem.
+If provided, this option instructs the script to load the TeX
+hyphenation patterns file given at the path C<[path]>.  If both a TeX
+hyphenation pattern file and a special word list (C<-spec>) is provided,
+the special word list is consulted before the TeX hyphenation patterns,
+and used instead of the hyphenation patterns if the word is found
+within.
+
+=item -style [format]
+
+By default, this script assumes that a TeX hyphenation pattern file
+specified by the C<-load> option is in UTF-8 format.  If this is not the
+case, use this C<-style> option to select a different pattern file
+format.  The given C<[format]> parameter must be a case-sensitive match
+for C<czech> C<german> or the default C<utf8>.  This option has no
+effect if no hyphenation pattern file is specified.
+
+B<Important:> The hyphenation pattern style refers to the encoding
+method for text, I<not> the language used.  That is, German hyphenation
+pattern files do I<not> necessarily use the C<german> style.
+
+=item -list [path]
+
+If provided, this option instructs the script to generate a hyphenated
+word list and store it to the file at C<[path]>, overwriting any file
+that may already be present.  The generated file will be a UTF-8 text
+file with one word per line, and grave accents used to mark hyphenation
+points.  Words are sorted first by length (longest words first; grave
+accents not counted) and then alphabetically according to Unicode
+Collation (grave accents ignored).
+
+All words are sequences of one or more Unicode codepoints of class L
+(Letter) or M (Combining Mark) plus the special grave accent symbol.
+Neither the first nor last character will ever be a grave accent, and
+grave accents only appear immediately before a codepoint of class L.
+Unicode will be normalized in NFC form.
+
+The word list is case sensitive, so a word is listed more than once, for
+example, if it appears both in a capitalized and lowercase version.
+Words that have no hyphenation added will still be in the word list,
+appearing without any grave accents.  Exact duplicates will be dropped
+from the word list.
+
+=item -special [path]
+
+If provided, this option instructs the script to load a specialized word
+list to consult for hyphenation from the file at C<[path]>.  The format
+of this word list is identical to the kind of list generated by the
+C<-list> option except the records do not need to be sorted and
+duplicates are allowed so long as they have the same hyphenation
+pattern.  It is therefore possible to generate a word list with the
+C<-list> option, manually apply hyphens with grave accents to the
+generated list, and then use it with this C<-special> option to
+hyphenate words.
+
+If used together with the C<-load> option, the specialized word list has
+priority, and the TeX hyphenation patterns will only be consulted for
+words that do not appear on the specialized word list.
+
+Words on the specialized word lists that do not have any grave accents
+mean that the word should not be hyphenated.
+
+B<Important:> matching to the specialized word list is case sensitive.
+Therefore, certain words may need to appear more than once on the list
+if they are used, for example, capitalized in some places and lowercase
+in other places.
+
+=back
 
 =cut
 
