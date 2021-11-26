@@ -20,6 +20,10 @@ To develop new Warp utilities, the `Warp::Reader` and `Warp::Writer` Perl module
 
 `warpxml.pl` takes an XML or HTML file or fragment as input and packages it appropriately in a WEFT file.  It also decodes entity escapes and simplifies them as much as possible.  Markup tags are excluded from textual content in the Warp Map.  See the script documentation for further information.
 
+## Filter utilities
+
+`warphyphen.pl` transforms WEFT by applying hyphenation.  It can also be used to generate word lists.  Hyphenation can be based on a word list with hyphenation points marked by grave accents, or a TeX hyphenation pattern file, or a combination of both.  See the script documentation for further information.
+
 ## Target utilities
 
 `unweft.pl` takes a WEFT file as input and outputs just the input file that was packaged within in.  This is appropriate to use at the end of Warp pipelines to unpack the transformed results from the WEFT file.
