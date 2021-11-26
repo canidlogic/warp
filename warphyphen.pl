@@ -21,7 +21,8 @@ use Unicode::Normalize;
 =head1 NAME
 
 warphyphen.pl - Transform a WEFT file by applying TeX hyphenation
-patterns and/or special hyphenation word lists to content words.
+patterns and/or special hyphenation word lists to content words.  Can
+also generate a word list.
 
 =head1 SYNOPSIS
 
@@ -43,6 +44,9 @@ consecutive codepoints of Unicode class L (Letter) or M (Combining Mark)
 within a content word.  The "alphabetic" words are then hyphenated.
 Unicode normalization to NFC is applied to parts of content words, but
 this script does I<not> normalize the entire WEFT file.
+
+To use this script to generate a word list, use the C<-list> option by
+itself.
 
 Temporary databases are used, so this script should be able to handle
 huge input files and huge word specialized hyphenation lists without
@@ -542,10 +546,6 @@ for(my $i = 0; $i <= $#ARGV; $i++) {
     die "Unrecognized option '$ARGV[$i]', stopped";
   }
 }
-
-# Make sure we at least got the path to the pattern file
-#
-($has_path) or die "Must provide a pattern file with -load, stopped";
 
 # If we were given a specialized word list, load the specialized
 # database
