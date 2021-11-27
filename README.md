@@ -22,7 +22,9 @@ To develop new Warp utilities, the `Warp::Reader` and `Warp::Writer` Perl module
 
 ## Filter utilities
 
-`warphyphen.pl` transforms WEFT by applying hyphenation.  It can also be used to generate word lists.  Hyphenation can be based on a word list with hyphenation points marked by grave accents, or a TeX hyphenation pattern file, or a combination of both.  See the script documentation for further information.
+`warpword.pl` transforms WEFT by splitting content words into content words that carry actual linguistic words, and content words that carry other things, such as punctuation, numbers, and symbols.  This transformation makes it easier for later scripts in the pipeline to apply operations only to linguistic words.  Content words that are linguistic in the output of this script will have at least one codepoint that is in Unicode General Category L.
+
+`warphyphen.pl` transforms WEFT by applying hyphenation.  It can also be used to generate word lists.  Hyphenation can be based on a word list with hyphenation points marked by grave accents, or a TeX hyphenation pattern file, or a combination of both.  You must first use `warpword.pl` or a similar script to split content words into linguistic and non-linguistic content.  See the script documentation for further information.
 
 ## Target utilities
 
