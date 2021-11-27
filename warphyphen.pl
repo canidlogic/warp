@@ -35,15 +35,18 @@ WEFT results.  Content words are transformed by hyphenation, which is
 controlled by options documented in the following section.  If no
 options are provided, no hyphenation will be applied, but the output may
 not be exactly the same as the input due to Unicode normalization
-applied to parts of content words.
+applied to certain content words.
 
-Hyphenation is only applied within content words.  Each content word is
-split up into "alphabetic" words (a misnomer since non-alphabetic
-scripts are also supported), which are defined as sequences of
-consecutive codepoints of Unicode class L (Letter) or M (Combining Mark)
-within a content word.  The "alphabetic" words are then hyphenated.
-Unicode normalization to NFC is applied to parts of content words, but
-this script does I<not> normalize the entire WEFT file.
+Hyphenation is only applied to content words that contain at least one
+codepoint in the Unicode class L (Letter).  None such content words may
+contain the grave accent symbol, nor any ASCII space, tab, LF, or CR
+character.  Unicode normalization to NFC is applied to such content
+words, but not to anything else.
+
+Before using this script, you should use C<warpword.pl> or a similar
+script to make sure content words are cleanly divided by linguistic
+words that contain at least one L-class codepoint, and non-linguistic
+content that does not contain any L-class codepoint.
 
 To use this script to generate a word list, use the C<-list> option by
 itself.
@@ -89,11 +92,12 @@ points.  Words are sorted first by length (longest words first; grave
 accents not counted) and then alphabetically according to Unicode
 Collation (grave accents ignored).
 
-All words are sequences of one or more Unicode codepoints of class L
-(Letter) or M (Combining Mark) plus the special grave accent symbol.
-Neither the first nor last character will ever be a grave accent, and
-grave accents only appear immediately before a codepoint of class L.
-Unicode will be normalized in NFC form.
+All words are sequences of one or more Unicode codepoints excluding
+ASCII space, horizontal tab, CR, and LF.  The grave accent symbol always
+is a marker of a hyphenation point.  Neither the first nor last
+character will ever be a grave accent, and grave accents never appear
+immediately before another grave accent.  Unicode will be normalized in
+NFC form.
 
 The word list is case sensitive, so a word is listed more than once, for
 example, if it appears both in a capitalized and lowercase version.
@@ -210,12 +214,10 @@ my $hyp;
 #
 # Otherwise, lines are trimmed of leading and trailing whitespace before
 # they are processed.  After trimming, the line is normalized to NFC
-# form.  After that, the only thing that must remain on non-blank lines
-# is a sequence of one or more codepoints that are in the Unicode
-# categories L (Letter) or M (Combining Mark) or are the special
-# codepoint for a grave accent.  Furthermore, neither the first nor last
-# codepoint may be the grave accent, and all grave accents must be
-# followed immediately by a codepoint of class L (Letter).
+# form.  After that, no more spaces, tabs, CRs or LFs may remain on the
+# line.  Furthermore, neither the first nor last codepoint may be the
+# grave accent, and no grave accent may immediately follow another grave
+# accent.
 #
 # The trimmed line with grave accents dropped is the key, while the
 # trimmed line with grave accents turned into soft hyphens is the value.
@@ -270,15 +272,14 @@ sub build_spec {
     # Normalize the line to NFC
     $s = NFC($s);
     
-    # Make sure there are only letters, combining marks, and grave
-    # accents left
-    ($s =~ /^[\pL\pM`]+$/u) or
-      die "Invalid word in specialized file: '$s', stopped";
+    # Make sure there are no whitespace or line break characters left
+    (not ($s =~ /[ \t\r\n]/u)) or
+      die "Internal whitespace in specialized file: '$s', stopped";
     
     # Make sure neither first nor last character is a grave accent, and
-    # that all grave accents are followed by a letter
+    # that no sequence of consecutive grave accents is present
     ((not ($s =~ /^`/u)) and (not ($s =~ /`$/u)) and
-        (not ($s =~ /`[\PL]/u))) or
+        (not ($s =~ /``/u))) or
       die "Invalid hyphenation syntax: '$s', stopped";
   
     # The key for this entry has all grave accents dropped, while the
@@ -306,10 +307,11 @@ sub build_spec {
   close($fh);
 }
 
-# Process an alphabetic word by inserting soft hyphens.
+# Process a linguistic word by inserting soft hyphens.
 #
-# The given parameter must be a sequence of one or more Unicode letters
-# and combining marks.  It will be normalized to NFC by this function.
+# The given parameter must not contain any whitespace, line breaks, or
+# grave accents, and not be empty.  It will be normalized to NFC by this
+# function.
 #
 # First, this function initializes the hyphenated word cache database if
 # not already initialized.  Then, it checks whether the given word is
@@ -347,9 +349,10 @@ sub proc_word {
   # Normalize to NFC
   $w = NFC($w);
   
-  # Make sure the word is a sequence of one or more letters and
-  # combining marks
-  ($w =~ /^[\pL\pM]+$/u) or die "Invalid word: '$w', stopped";
+  # Make sure the word is not empty and it does not contain any
+  # whitespace or line breaks or grave accents
+  (length $w > 0) or die "Empty word, stopped";
+  (not ($w =~ /[ \t\r\n`]/u)) or die "Invalid word: '$w', stopped";
   
   # Initialize hyphenation word cache database if needed
   if ($cache_init == 0) {
@@ -410,13 +413,6 @@ sub proc_word {
   
   # Return the result
   return $result;
-}
-
-# Custom sort comparator that compares by string length, with longer
-# strings first.
-#
-sub cmp_len {
-  return (length($b) <=> length($a));
 }
 
 # Write a wordlist representing everything currently in the hyphenation
@@ -572,55 +568,24 @@ for(my $i = 1; $i <= warp_count(); $i++) {
   # Get an array of substrings for the line
   my @pl = warp_read();
   
-  # We need to hyphenate any content words, which are at indices 1,3,5
-  # and so forth
+  # We need to hyphenate content words, which are at indices 1,3,5 and
+  # so forth
   for(my $j = 1; $j <= $#pl; $j = $j + 2) {
 
     # Get the current content word
     my $cw = $pl[$j];
-   
-    # Start the transformed content word off empty
-    my $tcw = '';
     
-    # Digest the content word
-    while (length $cw > 0) {
-      
-      # Add any non-letter, non-combining codepoints at the start of the
-      # content word to the transformed content word as-is
-      if ($cw =~ /^([^\pL\pM]+)/u) {
-        my $prefix = $1;
-        $tcw = $tcw . $prefix;
-        if (length $prefix < length $cw) {
-          $cw = substr($cw, length $prefix);
-        } else {
-          $cw = '';
-        }
-      }
-      
-      # If content word is now empty, done with loop
-      if (length $cw < 1) {
-        last;
-      }
-      
-      # Get the sequence of letters and combining marks at the start of
-      # the content word
-      $cw =~ /^([\pL\pM]+)/u;
-      my $aw = $1;
-      if (length $aw < length $cw) {
-        $cw = substr($cw, length $aw);
-      } else {
-        $cw = '';
-      }
-      
-      # Hyphenate this internal word
-      $aw = proc_word($aw);
-      
-      # Add the hyphenated result to the transformed content word
-      $tcw = $tcw . $aw;
+    # If this content word does not have any L-class codepoint within
+    # it, skip processing for it
+    if (not ($cw =~ /\pL/u)) {
+      next;
     }
     
+    # We have a linguistic content word, so hyphenate it
+    $cw = proc_word($cw);
+    
     # Replace the current content word with the transformed content word
-    $pl[$j] = $tcw;
+    $pl[$j] = $cw;
   }
   
   # Write the transformed line to output
