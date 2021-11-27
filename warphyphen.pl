@@ -574,11 +574,11 @@ for(my $i = 1; $i <= warp_count(); $i++) {
   
   # We need to hyphenate any content words, which are at indices 1,3,5
   # and so forth
-  for(my $j = 1; $j <= $#pl; $j++) {
-    
+  for(my $j = 1; $j <= $#pl; $j = $j + 2) {
+
     # Get the current content word
     my $cw = $pl[$j];
-    
+   
     # Start the transformed content word off empty
     my $tcw = '';
     
