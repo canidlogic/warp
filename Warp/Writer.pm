@@ -140,6 +140,8 @@ sub warp_write {
     $fh_cache = tempfile();
     (defined $fh_cache) or
       die "Failed to create temporary file, stopped";
+    binmode($fh_cache, ":encoding(utf8)") or
+      die "Failed to change temporary file to UTF-8, stopped";
   }
   
   # Write the Warp Map records for this line
